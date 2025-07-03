@@ -1,0 +1,73 @@
+name: Deploy Next.js to Hostinger with PM2
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Git Pull from GitHub on Server (clean untracked)
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          script: |
+            cd /home/user/web/ausbilder-germany.de/public_html
+            git config --global --add safe.directory FILE_PATH_SSH
+            ls -al
+            if [ -d ".git" ]; then
+              echo "✅ .git folder found. Proceeding with git pull (reset/clean)..."
+              git reset --hard
+              git clean -fd
+              git pull origin main
+            else
+              echo "❌ .git folder not found. Repo might not be initialized."
+              exit 1
+            fi
+      - name: Install dependencies
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          script: |
+            cd /home/user/web/ausbilder-germany.de/public_html
+            git config --global --add safe.directory FILE_PATH_SSH
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+            nvm use 22
+            npm install --force
+      - name: Build project
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          script: |
+            cd /home/user/web/ausbilder-germany.de/public_html
+            git config --global --add safe.directory FILE_PATH_SSH
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+            nvm use 22
+            npm run build
+      - name: Restart PM2
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          script: |
+            cd /home/user/web/ausbilder-germany.de/public_html
+                        export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+            nvm use 22
+            pm2 restart project_name || pm2 start npm --name project_name -- run start -- -p PORT
