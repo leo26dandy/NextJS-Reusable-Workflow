@@ -1,0 +1,94 @@
+name: Deploy Next.js to Hostinger with PM2 (Staging & Production)
+
+on:
+  push:
+    branches:
+      - main
+      - dev-stable
+
+env:
+  PROD_DIR: PRODUCTION_PATH
+  STAGING_DIR: STAGING_PATH
+  PROD_PM2: PM2_NAME_PRODUCTION
+  STAGING_PM2: PM2_NAME_STAGING
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Set deployment variables
+        run: |
+          if [[ "${GITHUB_REF##*/}" == "main" ]]; then
+            echo "DIR=$PROD_DIR" >> $GITHUB_ENV
+            echo "PM2_NAME=$PROD_PM2" >> $GITHUB_ENV
+          else
+            echo "DIR=$STAGING_DIR" >> $GITHUB_ENV
+            echo "PM2_NAME=$STAGING_PM2" >> $GITHUB_ENV
+          fi
+    
+      - name: Git Pull from GitHub on Server (clean untracked)
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          script: |
+            cd ${{ env.DIR }}
+            git config --global --add safe.directory ${{ env.DIR }}
+            ls -al
+
+            if [ -d ".git" ]; then
+              echo "✅ .git folder found. Proceeding with git pull (reset/clean)..."
+              # git reset --hard
+              # git clean -fd
+              # git fetch origin
+              # git checkout ${GITHUB_REF##*/}
+              # git pull origin ${GITHUB_REF##*/}
+            else
+              echo "❌ .git folder not found. Repo might not be initialized."
+              exit 1
+            fi
+
+      # - name: Install dependencies
+      #   uses: appleboy/ssh-action@v1.0.0
+      #   with:
+      #     host: ${{ secrets.HOSTINGER_HOST }}
+      #     username: ${{ secrets.HOSTINGER_USER }}
+      #     key: ${{ secrets.HOSTINGER_SSH_KEY }}
+      #     port: ${{ secrets.HOSTINGER_PORT || 22 }}
+      #     script: |
+      #       cd ${{ env.DIR }}
+      #       export NVM_DIR="$HOME/.nvm"
+      #       [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+      #       nvm use 22
+      #       npm install --force
+
+      # - name: Build project
+      #   uses: appleboy/ssh-action@v1.0.0
+      #   with:
+      #     host: ${{ secrets.HOSTINGER_HOST }}
+      #     username: ${{ secrets.HOSTINGER_USER }}
+      #     key: ${{ secrets.HOSTINGER_SSH_KEY }}
+      #     port: ${{ secrets.HOSTINGER_PORT || 22 }}
+      #     script: |
+      #       cd ${{ env.DIR }}
+      #       export NVM_DIR="$HOME/.nvm"
+      #       [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+      #       nvm use 22
+      #       npm run build
+
+      # - name: Restart PM2
+      #   uses: appleboy/ssh-action@v1.0.0
+      #   with:
+      #     host: ${{ secrets.HOSTINGER_HOST }}
+      #     username: ${{ secrets.HOSTINGER_USER }}
+      #     key: ${{ secrets.HOSTINGER_SSH_KEY }}
+      #     port: ${{ secrets.HOSTINGER_PORT || 22 }}
+      #     script: |
+      #       cd ${{ env.DIR }}
+      #       export NVM_DIR="$HOME/.nvm"
+      #       [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+      #       nvm use 22
+      #       pm2 restart ${{ env.PM2_NAME }} || pm2 start npm --name ${{ env.PM2_NAME }} -- run start -- -p 3001
