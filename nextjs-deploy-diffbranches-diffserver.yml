@@ -1,0 +1,209 @@
+name: Deploy Next.js to Hosting with PM2 (Staging & Production)
+
+on:
+  push:
+    branches:
+      - main        # Production hosting
+      - dev-stable  # Development hosting
+
+env:
+  # Production hosting (main branch)
+  PROD_DIR: /staging_directory_here/
+  PROD_PM2: pm2-project-name-here
+
+  # Development hosting (dev-stable branch) 
+  STAGING_DIR: /staging_directory_here/
+  STAGING_PM2: pm2-project-name-here
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Set deployment variables
+        run: |
+          BRANCH="${GITHUB_REF##*/}"
+          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
+          
+          if [[ "$BRANCH" == "main" ]]; then
+            # Production hosting settings
+            echo "DIR=$PROD_DIR" >> $GITHUB_ENV
+            echo "PM2_NAME=$PROD_PM2" >> $GITHUB_ENV
+            echo "ENVIRONMENT=Production" >> $GITHUB_ENV
+            echo "SITE_URL=https://ausbilder-germany.de" >> $GITHUB_ENV
+            echo "HOSTING_TYPE=production" >> $GITHUB_ENV
+          else
+            # Development hosting settings (dev-stable)
+            echo "DIR=$STAGING_DIR" >> $GITHUB_ENV
+            echo "PM2_NAME=$STAGING_PM2" >> $GITHUB_ENV
+            echo "ENVIRONMENT=Development" >> $GITHUB_ENV
+            echo "SITE_URL=https://ausbilder.admin-developer.com" >> $GITHUB_ENV
+            echo "HOSTING_TYPE=development" >> $GITHUB_ENV
+          fi
+    
+      - name: Git Pull from GitHub on Server (clean untracked)
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ env.HOSTING_TYPE == 'production' && secrets.HOSTINGER_HOST || secrets.DEVELOPMENT_HOSTINGER_HOST }}
+          username: ${{ env.HOSTING_TYPE == 'production' && secrets.HOSTINGER_USER || secrets.DEVELOPMENT_HOSTINGER_USER }}
+          key: ${{ env.HOSTING_TYPE == 'production' && secrets.HOSTINGER_SSH_KEY || secrets.DEVELOPMENT_HOSTINGER_SSH_KEY }}
+          port: ${{ env.HOSTING_TYPE == 'production' && secrets.HOSTINGER_PORT || secrets.DEVELOPMENT_HOSTINGER_PORT || 22 }}
+          script: |
+            cd ${{ env.DIR }}
+            git config --global --add safe.directory ${{ env.DIR }}
+            ls -al
+            if [ -d ".git" ]; then
+              echo "✅ .git folder found. Proceeding with git pull (reset/clean)..."
+              git reset --hard
+              git clean -fd
+              git fetch origin
+              git checkout ${{ env.BRANCH }}
+              git pull origin ${{ env.BRANCH }}
+            else
+              echo "❌ .git folder not found. Repo might not be initialized."
+              exit 1
+            fi
+
+      - name: Install dependencies
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ env.HOSTING_TYPE == 'production' && secrets.HOSTINGER_HOST || secrets.DEVELOPMENT_HOSTINGER_HOST }}
+          username: ${{ env.HOSTING_TYPE == 'production' && secrets.HOSTINGER_USER || secrets.DEVELOPMENT_HOSTINGER_USER }}
+          key: ${{ env.HOSTING_TYPE == 'production' && secrets.HOSTINGER_SSH_KEY || secrets.DEVELOPMENT_HOSTINGER_SSH_KEY }}
+          port: ${{ env.HOSTING_TYPE == 'production' && secrets.HOSTINGER_PORT || secrets.DEVELOPMENT_HOSTINGER_PORT || 22 }}
+          script: |
+            cd ${{ env.DIR }}
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+            nvm use 22
+            npm install --force
+
+      - name: Build project
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ env.HOSTING_TYPE == 'production' && secrets.HOSTINGER_HOST || secrets.DEVELOPMENT_HOSTINGER_HOST }}
+          username: ${{ env.HOSTING_TYPE == 'production' && secrets.HOSTINGER_USER || secrets.DEVELOPMENT_HOSTINGER_USER }}
+          key: ${{ env.HOSTING_TYPE == 'production' && secrets.HOSTINGER_SSH_KEY || secrets.DEVELOPMENT_HOSTINGER_SSH_KEY }}
+          port: ${{ env.HOSTING_TYPE == 'production' && secrets.HOSTINGER_PORT || secrets.DEVELOPMENT_HOSTINGER_PORT || 22 }}
+          script: |
+            cd ${{ env.DIR }}
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+            nvm use 22
+            npm run build
+
+      - name: Restart PM2
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ env.HOSTING_TYPE == 'production' && secrets.HOSTINGER_HOST || secrets.DEVELOPMENT_HOSTINGER_HOST }}
+          username: ${{ env.HOSTING_TYPE == 'production' && secrets.HOSTINGER_USER || secrets.DEVELOPMENT_HOSTINGER_USER }}
+          key: ${{ env.HOSTING_TYPE == 'production' && secrets.HOSTINGER_SSH_KEY || secrets.DEVELOPMENT_HOSTINGER_SSH_KEY }}
+          port: ${{ env.HOSTING_TYPE == 'production' && secrets.HOSTINGER_PORT || secrets.DEVELOPMENT_HOSTINGER_PORT || 22 }}
+          script: |
+            cd ${{ env.DIR }}
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+            nvm use 22
+            pm2 restart ${{ env.PM2_NAME }} || pm2 start npm --name ${{ env.PM2_NAME }} -- run start -- -p 3001
+
+      # Convert the timestamp in the workflow to Human Readable format
+      - name: Convert commit timestamp to readable format
+        id: commit_time
+        run: |
+          RAW_TS="${{ github.event.head_commit.timestamp }}"
+          # Convert to readable format like: July 15, 2025 at 10:33 AM
+          READABLE_TS=$(date -d "$RAW_TS" "+%B %d, %Y at %I:%M %p")
+          echo "formatted=$READABLE_TS" >> $GITHUB_OUTPUT
+
+      # Slack notification on successful deployment
+      - name: Slack Notification - Success
+        if: success()
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          # Use either channel-id (C1234567890) or channel (#channel-name)
+          channel-id: '#channelslackname'
+          slack-message: |
+            ✅ *Project Name Deployment Successful!*
+            
+            ```
+            Environment :  ${{ github.ref_name == 'main' && 'Production (https://webname.abc)' || 'Staging (https://webname.abc)' }}
+            Repository  :  ${{ github.repository }}
+            Branch      :  ${{ github.ref_name }}
+            Author      :  ${{ github.actor }}
+            Message     :  ${{ github.event.head_commit.message }}
+            ```
+            
+            🔗 [View Commit](${{ github.event.head_commit.url }})
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+      
+      # Slack notification on deployment failure
+      - name: Slack Notification - Failure
+        if: failure()
+        uses: slackapi/slack-github-action@v2.1.1
+        with:
+          method: chat.postMessage
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          payload: |
+            {
+              "channel": "#channelslackname",
+              "text": "❌Project Name Deployment Failed!",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "❌ *Project Name Deployment Failed!*"
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Environment:*\n${{ github.ref_name == 'main' && 'Production (https://webname.abc/)' || 'Staging (https://webname.abc)' }}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Branch:*\n`${{ github.ref_name }}`"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Author:*\n${{ github.actor }}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Repository:*\n${{ github.repository }}"
+                    }
+                  ]
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Commit Message:*\n${{ github.event.head_commit.message }}"
+                  }
+                },
+                {
+                  "type": "actions",
+                  "elements": [
+                    {
+                      "type": "button",
+                      "text": {
+                        "type": "plain_text",
+                        "text": "View Logs"
+                      },
+                      "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                    },
+                    {
+                      "type": "button",
+                      "text": {
+                        "type": "plain_text",
+                        "text": "View Commit"
+                      },
+                      "url": "${{ github.event.head_commit.url }}"
+                    }
+                  ]
+                }
+              ]
+            }
